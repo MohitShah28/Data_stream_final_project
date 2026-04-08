@@ -7,7 +7,6 @@ from pyvis.network import Network
 from design import build_stats_html, COLORS
 import json
 from multiprocessing import Pool, cpu_count
-from functools import partial
 
 # CONFIG
 # ─────────────────────────────────────────────
@@ -22,16 +21,6 @@ TOP_BRIDGES     = 10        # number of bridge users to highlight
 
 BRIDGE_COLOR  = "#FFFFFF"   # white — bridge users stand out
 BRIDGE_SIZE   = 42
-
-# ─────────────────────────────────────────────
-# STEP 1: LOAD DATA
-# ─────────────────────────────────────────────
-print("Loading data...")
-df = pd.read_csv(FILE_PATH, sep=r'\s+', names=["source", "target"])
-df = df.drop_duplicates()
-df["timestamp"] = range(len(df))
-df = df.sort_values("timestamp").reset_index(drop=True)
-print(f"Total edges loaded: {len(df)}\n")
 
 # ─────────────────────────────────────────────
 # HELPERS
@@ -93,24 +82,26 @@ def save_results_json(G, subgraph, communities, Q, bridge_nodes, betweenness,
     # Prepare bridge users data
     bridge_users_data = []
     for rank, node_id in enumerate(bridge_nodes[:TOP_BRIDGES], 1):
+        node_color = community_map.get(node_id, "#888888")
+        community_idx = COLORS.index(node_color) if node_color in COLORS else 0
         bridge_users_data.append({
             "rank": rank,
             "user_id": int(node_id),
             "betweenness_score": float(betweenness.get(node_id, 0)),
             "degree": int(G.degree(node_id)),
-            "community": int(COLORS.index(community_map.get(node_id, "#888888")) % len(COLORS)) + 1
-                if community_map.get(node_id) in COLORS else "Unknown"
+            "community": int(community_idx % len(COLORS)) + 1
         })
     
     # Prepare node data
     nodes_data = []
     for node in subgraph.nodes():
+        node_color = community_map.get(node, "#888888")
+        community_idx = COLORS.index(node_color) if node_color in COLORS else 0
         nodes_data.append({
             "id": int(node),
             "degree": int(subgraph.degree(node)),
             "is_bridge": node in bridge_nodes,
-            "community": int(COLORS.index(community_map.get(node, "#888888")) % len(COLORS)) + 1
-                if community_map.get(node) in COLORS else "Unknown"
+            "community": int(community_idx % len(COLORS)) + 1
         })
     
     # Prepare edge data
@@ -122,6 +113,9 @@ def save_results_json(G, subgraph, communities, Q, bridge_nodes, betweenness,
         })
     
     # Create main results dictionary
+    dominant_community_size = int(len(max(communities, key=len))) if communities else 0
+    dominant_community_percentage = (dominant_community_size / sum(len(c) for c in communities) * 100) if sum(len(c) for c in communities) > 0 else 0.0
+    
     results = {
         "analysis_metadata": {
             "total_nodes": int(subgraph.number_of_nodes()),
@@ -129,8 +123,8 @@ def save_results_json(G, subgraph, communities, Q, bridge_nodes, betweenness,
             "num_communities": len(communities),
             "modularity_Q": float(Q),
             "modularity_strength": "Strong Echo Chambers" if Q >= 0.3 else "Weak Separation",
-            "dominant_community_size": int(len(max(communities, key=len))),
-            "dominant_community_percentage": float(len(max(communities, key=len)) / sum(len(c) for c in communities) * 100)
+            "dominant_community_size": dominant_community_size,
+            "dominant_community_percentage": float(dominant_community_percentage)
         },
         "communities": communities_data,
         "bridge_users": bridge_users_data,
@@ -143,9 +137,6 @@ def save_results_json(G, subgraph, communities, Q, bridge_nodes, betweenness,
         json.dump(results, f, indent=2)
     
     return output_file
-
-
-
 
 
 def save_visualization(G, subgraph, community_map, bridge_nodes,
@@ -234,119 +225,130 @@ def save_visualization(G, subgraph, community_map, bridge_nodes,
 
 
 # ─────────────────────────────────────────────
-# STEP 2: STREAMING LOOP (PARALLELIZED)
+# MAIN EXECUTION
 # ─────────────────────────────────────────────
-edge_window   = deque()
-G             = nx.DiGraph()
-community_map = {}
 
-print("Starting stream simulation (PARALLEL MODE)...\n")
+if __name__ == '__main__':
+    print("Loading data...")
+    df = pd.read_csv(FILE_PATH, sep=r'\s+', names=["source", "target"])
+    df = df.drop_duplicates()
+    df["timestamp"] = range(len(df))
+    df = df.sort_values("timestamp").reset_index(drop=True)
+    print(f"Total edges loaded: {len(df)}\n")
 
-# Prepare all chunks for parallel processing
-all_chunks = []
-for chunk_idx, start in enumerate(range(0, len(df), CHUNK_SIZE)):
-    chunk = df.iloc[start : start + CHUNK_SIZE]
-    all_chunks.append((chunk, chunk_idx))
+    # ─────────────────────────────────────────────
+    # STEP 2: STREAMING LOOP (PARALLELIZED)
+    # ─────────────────────────────────────────────
+    edge_window   = deque()
+    G             = nx.DiGraph()
+    community_map = {}
 
-# Process chunks in parallel
-num_workers = max(1, cpu_count() - 1)  # Use all cores except one
-print(f"Using {num_workers} parallel workers\n")
+    print("Starting stream simulation (PARALLEL MODE)...\n")
 
-with Pool(num_workers) as pool:
-    results = pool.map(process_chunk_parallel, all_chunks)
+    # Prepare all chunks for parallel processing
+    all_chunks = []
+    for chunk_idx, start in enumerate(range(0, len(df), CHUNK_SIZE)):
+        chunk = df.iloc[start : start + CHUNK_SIZE]
+        all_chunks.append((chunk, chunk_idx))
 
-# Process results sequentially (maintain graph consistency)
-for chunk_idx, edges in sorted(results):
-    # Add edges to window
-    for src, tgt in edges:
-        edge_window.append((src, tgt))
-        G.add_edge(src, tgt)
+    # Process chunks in parallel
+    num_workers = max(1, cpu_count() - 1)  # Use all cores except one
+    print(f"Using {num_workers} parallel workers\n")
 
-    # Maintain sliding window
-    while len(edge_window) > WINDOW_SIZE:
-        old_src, old_tgt = edge_window.popleft()
-        if G.has_edge(old_src, old_tgt):
-            G.remove_edge(old_src, old_tgt)
+    with Pool(num_workers) as pool:
+        results = pool.map(process_chunk_parallel, all_chunks)
 
-    # Remove low-degree nodes
-    low_degree = [n for n, d in list(G.degree()) if d < MIN_DEGREE]
-    G.remove_nodes_from(low_degree)
+    # Process results sequentially (maintain graph consistency)
+    for chunk_idx, edges in sorted(results):
+        # Add edges to window
+        for src, tgt in edges:
+            edge_window.append((src, tgt))
+            G.add_edge(src, tgt)
 
-    print(f"Chunk {chunk_idx+1:>4} | Window: {len(edge_window):>5} | "
-          f"Nodes: {G.number_of_nodes():>5} | Edges: {G.number_of_edges():>6}")
+        # Maintain sliding window
+        while len(edge_window) > WINDOW_SIZE:
+            old_src, old_tgt = edge_window.popleft()
+            if G.has_edge(old_src, old_tgt):
+                G.remove_edge(old_src, old_tgt)
 
-    # Run community detection every RERUN_EVERY chunks
-    if (chunk_idx + 1) % RERUN_EVERY == 0 and G.number_of_nodes() > 10:
-        print(f"\n  → Running Girvan-Newman at chunk {chunk_idx + 1}...")
+        # Remove low-degree nodes
+        low_degree = [n for n, d in list(G.degree()) if d < MIN_DEGREE]
+        G.remove_nodes_from(low_degree)
 
+        print(f"Chunk {chunk_idx+1:>4} | Window: {len(edge_window):>5} | "
+              f"Nodes: {G.number_of_nodes():>5} | Edges: {G.number_of_edges():>6}")
+
+        # Run community detection every RERUN_EVERY chunks
+        if (chunk_idx + 1) % RERUN_EVERY == 0 and G.number_of_nodes() > 10:
+            print(f"\n  → Running Girvan-Newman at chunk {chunk_idx + 1}...")
+
+            top_nodes = sorted(
+                G.nodes(), key=lambda n: G.degree(n), reverse=True
+            )[:SUBGRAPH_NODES]
+            subgraph = G.subgraph(top_nodes).to_undirected().copy()
+            subgraph.remove_edges_from(nx.selfloop_edges(subgraph))
+
+            if subgraph.number_of_edges() == 0:
+                print("  → No edges in subgraph, skipping.\n")
+                continue
+
+            try:
+                communities, Q = find_best_communities(subgraph)
+
+                # Assign community colors
+                community_map = {}
+                for idx, community in enumerate(communities):
+                    color = COLORS[idx % len(COLORS)]
+                    for node in community:
+                        community_map[node] = color
+
+                # Find bridge users via betweenness centrality
+                betweenness = nx.betweenness_centrality(subgraph)
+                bridge_nodes = sorted(
+                    betweenness, key=betweenness.get, reverse=True
+                )[:TOP_BRIDGES]
+
+                save_visualization(G, subgraph, community_map, bridge_nodes,
+                                   betweenness, communities, Q, chunk_idx + 1, is_final=False)
+
+            except Exception as e:
+                print(f"  → Failed: {e}\n")
+
+    # ─────────────────────────────────────────────
+    # STEP 3: FINAL VISUALIZATION
+    # ─────────────────────────────────────────────
+    print("\nGenerating final visualization...")
+
+    if G.number_of_nodes() > 0:
         top_nodes = sorted(
             G.nodes(), key=lambda n: G.degree(n), reverse=True
         )[:SUBGRAPH_NODES]
-        subgraph = G.subgraph(top_nodes).to_undirected().copy()
-        subgraph.remove_edges_from(nx.selfloop_edges(subgraph))
-
-        if subgraph.number_of_edges() == 0:
-            print("  → No edges in subgraph, skipping.\n")
-            continue
+        final_sub = G.subgraph(top_nodes).to_undirected().copy()
+        final_sub.remove_edges_from(nx.selfloop_edges(final_sub))
 
         try:
-            communities, Q = find_best_communities(subgraph)
+            communities, Q = find_best_communities(final_sub)
 
-            # Assign community colors
             community_map = {}
             for idx, community in enumerate(communities):
                 color = COLORS[idx % len(COLORS)]
                 for node in community:
                     community_map[node] = color
 
-            # Find bridge users via betweenness centrality
-            betweenness = nx.betweenness_centrality(subgraph)
+            betweenness  = nx.betweenness_centrality(final_sub)
             bridge_nodes = sorted(
                 betweenness, key=betweenness.get, reverse=True
             )[:TOP_BRIDGES]
 
-            save_visualization(G, subgraph, community_map, bridge_nodes,
-                               betweenness, communities, Q, chunk_idx + 1, is_final=False)
+            save_visualization(G, final_sub, community_map, bridge_nodes,
+                               betweenness, communities, Q, "FINAL", is_final=True)
+            print("Final HTML saved: " + OUTPUT_FILE)
+            
+            json_file = save_results_json(G, final_sub, communities, Q, bridge_nodes,
+                                           betweenness, community_map)
+            print("Final results saved: " + json_file)
 
         except Exception as e:
-            print(f"  → Failed: {e}\n")
+            print(f"Final failed: {e}")
 
-# ─────────────────────────────────────────────
-# STEP 3: FINAL VISUALIZATION
-# ─────────────────────────────────────────────
-print("\nGenerating final visualization...")
-
-if G.number_of_nodes() > 0:
-    top_nodes = sorted(
-        G.nodes(), key=lambda n: G.degree(n), reverse=True
-    )[:SUBGRAPH_NODES]
-    final_sub = G.subgraph(top_nodes).to_undirected().copy()
-    final_sub.remove_edges_from(nx.selfloop_edges(final_sub))
-
-    try:
-        communities, Q = find_best_communities(final_sub)
-
-        community_map = {}
-        for idx, community in enumerate(communities):
-            color = COLORS[idx % len(COLORS)]
-            for node in community:
-                community_map[node] = color
-
-        betweenness  = nx.betweenness_centrality(final_sub)
-        bridge_nodes = sorted(
-            betweenness, key=betweenness.get, reverse=True
-        )[:TOP_BRIDGES]
-
-        save_visualization(G, final_sub, community_map, bridge_nodes,
-                           betweenness, communities, Q, "FINAL", is_final=True)
-        print("Final HTML saved: " + OUTPUT_FILE)
-        
-        json_file = save_results_json(G, final_sub, communities, Q, bridge_nodes,
-                                       betweenness, community_map)
-        print("Final results saved: " + json_file)
-
-    except Exception as e:
-        print(f"Final failed: {e}")
-
-print("\nDone.")
-
+    print("\nDone.")
