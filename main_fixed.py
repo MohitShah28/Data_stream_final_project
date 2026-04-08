@@ -5,7 +5,6 @@ from collections import deque
 import networkx.algorithms.community as nx_comm
 from pyvis.network import Network
 from design import build_stats_html, COLORS
-import json
 from multiprocessing import Pool, cpu_count
 
 # CONFIG
@@ -131,12 +130,6 @@ def save_results_json(G, subgraph, communities, Q, bridge_nodes, betweenness,
         "nodes": nodes_data,
         "edges": edges_data
     }
-    
-    # Save to JSON
-    with open(output_file, "w") as f:
-        json.dump(results, f, indent=2)
-    
-    return output_file
 
 
 def save_visualization(G, subgraph, community_map, bridge_nodes,
