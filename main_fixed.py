@@ -64,74 +64,6 @@ def process_chunk_parallel(args):
     return chunk_idx, edges
 
 
-def save_results_json(G, subgraph, communities, Q, bridge_nodes, betweenness, 
-                      community_map, output_file="results.json"):
-    """Save final analysis results as JSON file."""
-    
-    # Prepare community data
-    communities_data = []
-    for idx, comm in enumerate(communities):
-        communities_data.append({
-            "id": idx + 1,
-            "color": COLORS[idx % len(COLORS)],
-            "size": len(comm),
-            "members": list(comm)
-        })
-    
-    # Prepare bridge users data
-    bridge_users_data = []
-    for rank, node_id in enumerate(bridge_nodes[:TOP_BRIDGES], 1):
-        node_color = community_map.get(node_id, "#888888")
-        community_idx = COLORS.index(node_color) if node_color in COLORS else 0
-        bridge_users_data.append({
-            "rank": rank,
-            "user_id": int(node_id),
-            "betweenness_score": float(betweenness.get(node_id, 0)),
-            "degree": int(G.degree(node_id)),
-            "community": int(community_idx % len(COLORS)) + 1
-        })
-    
-    # Prepare node data
-    nodes_data = []
-    for node in subgraph.nodes():
-        node_color = community_map.get(node, "#888888")
-        community_idx = COLORS.index(node_color) if node_color in COLORS else 0
-        nodes_data.append({
-            "id": int(node),
-            "degree": int(subgraph.degree(node)),
-            "is_bridge": node in bridge_nodes,
-            "community": int(community_idx % len(COLORS)) + 1
-        })
-    
-    # Prepare edge data
-    edges_data = []
-    for src, tgt in subgraph.edges():
-        edges_data.append({
-            "source": int(src),
-            "target": int(tgt)
-        })
-    
-    # Create main results dictionary
-    dominant_community_size = int(len(max(communities, key=len))) if communities else 0
-    dominant_community_percentage = (dominant_community_size / sum(len(c) for c in communities) * 100) if sum(len(c) for c in communities) > 0 else 0.0
-    
-    results = {
-        "analysis_metadata": {
-            "total_nodes": int(subgraph.number_of_nodes()),
-            "total_edges": int(subgraph.number_of_edges()),
-            "num_communities": len(communities),
-            "modularity_Q": float(Q),
-            "modularity_strength": "Strong Echo Chambers" if Q >= 0.3 else "Weak Separation",
-            "dominant_community_size": dominant_community_size,
-            "dominant_community_percentage": float(dominant_community_percentage)
-        },
-        "communities": communities_data,
-        "bridge_users": bridge_users_data,
-        "nodes": nodes_data,
-        "edges": edges_data
-    }
-
-
 def save_visualization(G, subgraph, community_map, bridge_nodes,
                        betweenness, communities, Q, chunk_idx, is_final=False):
     """Build Pyvis HTML with stats panel and save to single output file."""
@@ -336,10 +268,6 @@ if __name__ == '__main__':
             save_visualization(G, final_sub, community_map, bridge_nodes,
                                betweenness, communities, Q, "FINAL", is_final=True)
             print("Final HTML saved: " + OUTPUT_FILE)
-            
-            json_file = save_results_json(G, final_sub, communities, Q, bridge_nodes,
-                                           betweenness, community_map)
-            print("Final results saved: " + json_file)
 
         except Exception as e:
             print(f"Final failed: {e}")
