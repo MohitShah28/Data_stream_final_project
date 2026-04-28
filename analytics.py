@@ -35,11 +35,11 @@ COL_WIDTHS = {
     "chunk": 8, "timestamp": 12, "num_communities": 18,
     "modularity_Q": 14, "q_strong": 10, "community_id": 14,
     "community_size": 16, "community_color": 16, "community_pct": 14,
-    "bridge_user_1": 14, "bridge_score_1": 14,
-    "bridge_user_2": 14, "bridge_score_2": 14,
-    "bridge_user_3": 14, "bridge_score_3": 14,
-    "bridge_user_4": 14, "bridge_score_4": 14,
-    "bridge_user_5": 14, "bridge_score_5": 14,
+    "bridge_user_1": 14, 
+    "bridge_user_2": 14, 
+    "bridge_user_3": 14, 
+    "bridge_user_4": 14, 
+    "bridge_user_5": 14, 
 }
 
 def _hex_to_argb(hex_color):
