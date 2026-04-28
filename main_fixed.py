@@ -6,6 +6,7 @@ import networkx.algorithms.community as nx_comm
 from pyvis.network import Network
 from design import build_stats_html, COLORS
 from multiprocessing import Pool, cpu_count
+from analytics import log_snapshot
 
 # CONFIG
 # ─────────────────────────────────────────────
@@ -235,6 +236,8 @@ if __name__ == '__main__':
 
                 save_visualization(G, subgraph, community_map, bridge_nodes,
                                    betweenness, communities, Q, chunk_idx + 1, is_final=False)
+                
+                log_snapshot(chunk_idx + 1, communities, Q, bridge_nodes, betweenness, COLORS)
 
             except Exception as e:
                 print(f"  → Failed: {e}\n")
@@ -268,6 +271,8 @@ if __name__ == '__main__':
             save_visualization(G, final_sub, community_map, bridge_nodes,
                                betweenness, communities, Q, "FINAL", is_final=True)
             print("Final HTML saved: " + OUTPUT_FILE)
+
+            log_snapshot("FINAL", communities, Q, bridge_nodes, betweenness, COLORS)
 
         except Exception as e:
             print(f"Final failed: {e}")
